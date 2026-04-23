@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DABEST.Engine</title>
+  <style>
+    :root { --neon: #00ff41; --bg: #010201; --panel: #0a0f0a; --accent: #00ff9d; --err: #ff4444; }
+    body { background: var(--bg); color: var(--neon); font-family: 'Segoe UI', sans-serif; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+    .container { width: 95%; max-width: 850px; position: relative; z-index: 1; }
+    .card { background: var(--panel); border: 1px solid #1e4a1e; border-radius: 12px; padding: 30px; box-shadow: 0 0 30px rgba(0,255,65,0.05); margin-bottom: 20px; text-align: center; }
+    .header { font-size: 2.2rem; letter-spacing: 6px; margin-bottom: 5px; font-weight: 900; text-transform: uppercase; }
+    #dynamic-desc { color: var(--accent); font-size: 0.9rem; margin-bottom: 25px; font-weight: bold; letter-spacing: 1px; min-height: 1.5em; text-transform: uppercase; }
+    .controls { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-bottom: 15px; }
+    .btn-group { border: 1px solid #1e4a1e; border-radius: 20px; padding: 4px; display: flex; gap: 5px; background: #000; }
+    .mode-btn { background: transparent; border: none; color: var(--neon); padding: 8px 16px; border-radius: 15px; cursor: pointer !important; font-size: 0.75rem; transition: 0.3s; font-weight: bold; outline: none; }
+    .mode-btn.active { background: var(--neon); color: #000; }
+    .search-wrapper { position: relative; width: 100%; margin-bottom: 20px; }
+    input { background: #000; border: 1px solid #1e4a1e; color: var(--neon); padding: 18px; width: calc(100% - 40px); border-radius: 8px; font-size: 1.1rem; outline: none; }
+    #autofill-list { position: absolute; top: 100%; left: 0; width: 100%; background: var(--panel); border: 1px solid #1e4a1e; border-radius: 0 0 8px 8px; z-index: 100; display: none; max-height: 200px; overflow-y: auto; text-align: left; }
+    .autofill-item { padding: 12px 18px; cursor: pointer; border-bottom: 1px solid #112a11; color: #bbb; font-size: 0.9rem; }
+    .autofill-item:hover { background: #112a11; color: var(--neon); }
+    button#crawl-btn { background: var(--neon); color: #000; border: none; padding: 16px; width: 100%; font-weight: 900; cursor: pointer !important; border-radius: 8px; text-transform: uppercase; transition: 0.2s; }
+    #ai-analysis { background: rgba(0, 255, 157, 0.07); border: 1px solid var(--accent); padding: 25px; border-radius: 10px; margin-top: 25px; display: none; color: #fff; text-align: left; border-left: 4px solid var(--accent); line-height: 1.6; }
+    #results { display: grid; grid-template-columns: 1fr; gap: 15px; margin-top: 20px; width: 100%; }
+    .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; }
+    .img-item img { width: 100%; height: 160px; object-fit: cover; border-radius: 8px; border: 1px solid #1e4a1e; }
+    .result-item { background: rgba(255,255,255,0.02); padding: 15px; border-radius: 8px; border-left: 2px solid var(--accent); }
+    a { color: var(--accent); text-decoration: none; font-weight: bold; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="header">INTER<span style="color:#fff">SEARCH</span></div>
+  <div id="dynamic-desc">SERVER ONLINE</div>
+  <div class="card">
+    <div class="controls">
+      <div class="btn-group">
+        <button id="btn-text" class="mode-btn active" onclick="window.setMode('text')">TEXT</button>
+        <button id="btn-image" class="mode-btn" onclick="window.setMode('image')">IMAGE</button>
+      </div>
+      <div class="btn-group">
+        <button id="btn-en" class="mode-btn active" onclick="window.setLang('en')">ENG</button>
+        <button id="btn-hi" class="mode-btn" onclick="window.setLang('hi')">HIN</button>
+      </div>
+    </div>
+    <div class="search-wrapper">
+      <input id="searchQuery" placeholder="Search..." autocomplete="off" oninput="handleAutofill()">
+      <div id="autofill-list"></div>
+    </div>
+    <button id="crawl-btn" onclick="window.executeNeuralCrawl()">Start Crawl</button>
+    <div id="ai-analysis"></div>
+  </div>
+  <div id="results"></div>
+</div>
+
+<script>
+  const TAVILY_KEY = "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";
+  const SERPER_KEYS = ["fdce127b147d060091a73cfae7d31504662f0764", "d4eb67dfedfa96456d3a1db512b423b85690e247"];
+  const GROQ_KEY = "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";
+  
+  let currentMode = 'text';
+  let currentLang = 'en';
+  let history = JSON.parse(localStorage.getItem('intersearch_history')) || [];
+
+  const UI_TEXT = {
+    en: { start: "Start Crawl", placeholder: "Search...", ready: "SYSTEM READY", crawling: "CRAWLING NODES...", syn: "SYNTHESIZING...", err: "SYSTEM ERROR" },
+    hi: { start: "खोज शुरू करें", placeholder: "यहाँ लिखें...", ready: "सिस्टम तैयार है", crawling: "डेटा खोज रहे हैं...", syn: "विश्लेषण जारी है...", err: "सिस्टम एरर" }
+  };
+
+  window.setMode = function(mode) {
+    currentMode = mode;
+    document.getElementById('btn-text').classList.toggle('active', mode === 'text');
+    document.getElementById('btn-image').classList.toggle('active', mode === 'image');
+  };
+
+  window.setLang = function(lang) {
+    currentLang = lang;
+    document.getElementById('btn-en').classList.toggle('active', lang === 'en');
+    document.getElementById('btn-hi').classList.toggle('active', lang === 'hi');
+    document.getElementById('crawl-btn').innerText = UI_TEXT[lang].start;
+    document.getElementById('searchQuery').placeholder = UI_TEXT[lang].placeholder;
+    updateStatus(UI_TEXT[lang].ready);
+  };
+
+  function updateStatus(msg, isError = false) {
+    const el = document.getElementById('dynamic-desc');
+    el.style.color = isError ? "var(--err)" : "var(--accent)";
+    el.innerHTML = msg;
+  }
+
+  window.handleAutofill = function() {
+    const input = document.getElementById('searchQuery').value.toLowerCase();
+    const list = document.getElementById('autofill-list');
+    list.innerHTML = "";
+    if(!input) { list.style.display = "none"; return; }
+    const matches = history.filter(h => h.toLowerCase().includes(input)).slice(0, 5);
+    if(matches.length > 0) {
+      matches.forEach(m => {
+        const div = document.createElement('div');
+        div.className = 'autofill-item';
+        div.innerText = m;
+        div.onclick = () => { document.getElementById('searchQuery').value = m; list.style.display = "none"; window.executeNeuralCrawl(); };
+        list.appendChild(div);
+      });
+      list.style.display = "block";
+    } else { list.style.display = "none"; }
+  };
+
+  window.executeNeuralCrawl = async function() {
+    const query = document.getElementById('searchQuery').value;
+    const aiBox = document.getElementById('ai-analysis');
+    const resultsDiv = document.getElementById('results');
+    if (!query) return updateStatus(UI_TEXT[currentLang].err, true);
+    
+    document.getElementById('autofill-list').style.display = "none";
+    if(!history.includes(query)) { history.unshift(query); history = history.slice(0, 20); localStorage.setItem('intersearch_history', JSON.stringify(history)); }
+
+    aiBox.style.display = "none";
+    resultsDiv.innerHTML = "";
+    updateStatus(UI_TEXT[currentLang].crawling);
+
+    let searchSuccess = false;
+    let context = "";
+    let images = [];
+
+    try {
+      const tRes = await fetch("https://api.tavily.com/search", { 
+        method: "POST", 
+        headers: { "Content-Type": "application/json" }, 
+        body: JSON.stringify({ api_key: TAVILY_KEY, query: query, include_images: currentMode === 'image' }) 
+      });
+      const tData = await tRes.json();
+      if (currentMode === 'image' && tData.images?.length > 0) {
+        images = tData.images.map(img => typeof img === 'string' ? img : img.url);
+        searchSuccess = true;
+      } else if (currentMode === 'text' && tData.results?.length > 0) {
+        tData.results.slice(0, 4).forEach(r => {
+          context += `[Source: ${r.title}] [URL: ${r.url}] Content: ${r.content}\n`;
+          resultsDiv.innerHTML += `<div class="result-item"><a href="${r.url}" target="_blank">${r.title}</a><br><small style="color:#bbb;">${r.content}</small></div>`;
+        });
+        searchSuccess = true;
+      }
+    } catch (e) {}
+
+    if (currentMode === 'image' && searchSuccess) {
+      resultsDiv.className = "image-grid";
+      images.slice(0, 12).forEach(url => { if (url) resultsDiv.innerHTML += `<div class="img-item"><a href="${url}" target="_blank"><img src="${url}" onerror="this.parentElement.parentElement.remove()"></a></div>`; });
+      updateStatus(UI_TEXT[currentLang].ready);
+      return;
+    }
+
+    updateStatus(UI_TEXT[currentLang].syn);
+    const hindiInstruction = "YOU MUST RESPOND ONLY IN HINDI (हिंदी). Use Devanagari script. Do not use English sentences.";
+    const englishInstruction = "Respond in clear English.";
+    const sysPrompt = `You are InterSearch AI. ${currentLang === 'hi' ? hindiInstruction : englishInstruction} Task: Summarize the search context in 3 technical points. At the end, list sources as clickable HTML: <a href="URL" target="_blank" style="color:var(--accent);">Title</a>.`;
+    
+    try {
+      const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST", 
+        headers: { "Authorization": `Bearer ${GROQ_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          model: "llama-3.1-8b-instant", 
+          messages: [{ role: "system", content: sysPrompt }, { role: "user", content: context || query }],
+          temperature: 0.2
+        })
+      });
+      const aiData = await groqRes.json();
+      aiBox.style.display = "block";
+      aiBox.innerHTML = `<strong>OUTPUT</strong><br><br>${aiData.choices[0].message.content.replace(/\n/g, '<br>')}`;
+      updateStatus(UI_TEXT[currentLang].ready);
+    } catch (err) {
+      updateStatus(UI_TEXT[currentLang].err, true);
+    }
+  };
+
+  document.getElementById('searchQuery').addEventListener('keypress', (e) => { if(e.key === 'Enter') window.executeNeuralCrawl(); });
+  document.addEventListener('click', (e) => { if(!e.target.closest('.search-wrapper')) document.getElementById('autofill-list').style.display = "none"; });
+</script>
+</body>
+</html>
